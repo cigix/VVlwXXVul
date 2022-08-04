@@ -2,7 +2,7 @@ WORDLIST?=words.txt
 
 CFLAGS=-O3 -g3 -march=native
 
-all: matches.txt
+all: results.json
 
 uniques.txt: uniques.py $(WORDLIST)
 	./uniques.py $(WORDLIST) > $@
@@ -16,5 +16,8 @@ binaries.dat: binaries.py codes.txt
 matches.txt: match binaries.dat
 	./match binaries.dat | tee $@
 
+results.json: resolve.py codes.txt matches.txt
+	./resolve.py codes.txt matches.txt > $@
+
 clean:
-	$(RM) uniques.txt codes.txt binaries.dat match matches.txt
+	$(RM) uniques.txt codes.txt binaries.dat match matches.txt results.json
