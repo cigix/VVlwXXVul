@@ -1,4 +1,6 @@
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -8,6 +10,11 @@
 #include <unistd.h>
 
 #include <immintrin.h>
+#include <pthread.h>
+
+#ifndef MAX_PROCESS_COUNT
+# define MAX_PROCESS_COUNT 8
+#endif
 
 int main(int argc, const char *argv[])
 {
@@ -68,12 +75,22 @@ int main(int argc, const char *argv[])
   }
   fprintf(stderr, "OK\n");
 
-  clock_t clock_start = clock();
+  int process_count = 0;
+  pthread_mutex_t print_mutex;
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+  pthread_mutex_init(&print_mutex, &attr);
+
+  struct timespec clock_start;
+  clock_gettime(CLOCK_REALTIME, &clock_start);
   int_fast64_t count = 0;
-#define STATUS() \
+#define PRINT_PROGRESS() \
   do { \
-    clock_t clock_end = clock(); \
-    double seconds = ((double)(clock_end - clock_start)) / CLOCKS_PER_SEC; \
+    struct timespec clock_end; \
+    clock_gettime(CLOCK_REALTIME, &clock_end); \
+    double seconds = (double)(clock_end.tv_sec - clock_start.tv_sec) \
+                   + (double)(clock_end.tv_nsec - clock_start.tv_nsec) / 1e9; \
     double items_per_second = (double)count / seconds; \
     fprintf(stderr, "Processed %llu items in %.2fs (%.2e items/s)\r", \
             (unsigned long long)count, seconds, items_per_second); \
@@ -81,51 +98,102 @@ int main(int argc, const char *argv[])
 
   for (int id1 = 0; id1 < codes_len; ++id1)
   {
-    STATUS();
-    int_fast32_t Vlwcode = codes[id1];
-    for (int id2 = id1 + 1; id2 < codes_len; ++id2)
+    PRINT_PROGRESS();
+    if (MAX_PROCESS_COUNT <= process_count)
     {
-      int_fast32_t Xlwcode = Vlwcode | codes[id2];
-      if (_mm_popcnt_u32(Xlwcode) != 10)
+      // Wait for one process before spawning one new
+      int status;
+      if (wait(&status) < 0)
       {
-        count += (codes_len - id2) * (codes_len - id2 - 2) * (codes_len - id2 - 3);
-        continue;
+        perror(argv[0]);
+        exit(1);
       }
+      if (status != 0)
+        // Child must print its own error message
+        exit(1);
+    }
 
-      for (int id3 = id2 + 1; id3 < codes_len; ++id3)
+    pid_t pid = fork();
+
+    if (pid == 0)
+    {
+      // This is the child process
+      int_fast32_t Vlwcode = codes[id1];
+      for (int id2 = id1 + 1; id2 < codes_len; ++id2)
       {
-        int_fast32_t XVlwcode = Xlwcode | codes[id3];
-        if (_mm_popcnt_u32(XVlwcode) != 15)
+        int_fast32_t Xlwcode = Vlwcode | codes[id2];
+        if (_mm_popcnt_u32(Xlwcode) != 10)
         {
-          count += (codes_len - id3) * (codes_len - id3 - 1);
           continue;
         }
 
-        for (int id4 = id3 + 1; id4 < codes_len; ++id4)
+        for (int id3 = id2 + 1; id3 < codes_len; ++id3)
         {
-          int_fast32_t XXlwcode = XVlwcode | codes[id4];
-          if (_mm_popcnt_u32(XXlwcode) != 20)
+          int_fast32_t XVlwcode = Xlwcode | codes[id3];
+          if (_mm_popcnt_u32(XVlwcode) != 15)
           {
-            count += codes_len - id4;
             continue;
           }
 
-          for (int id5 = id4 + 1; id5 < codes_len; ++id5)
+          for (int id4 = id3 + 1; id4 < codes_len; ++id4)
           {
-            int_fast32_t XXVlwcode = XXlwcode | codes[id5];
-            if (_mm_popcnt_u32(XXVlwcode) == 25)
+            int_fast32_t XXlwcode = XVlwcode | codes[id4];
+            if (_mm_popcnt_u32(XXlwcode) != 20)
             {
-              fprintf(stderr, "%64c\r", ' ');
-              printf("%#010x,%#010x,%#010x,%#010x,%#010x\n", codes[id1],
-                     codes[id2], codes[id3], codes[id4], codes[id5]);
-              fflush(NULL);
+              continue;
             }
-            ++count;
+
+            for (int id5 = id4 + 1; id5 < codes_len; ++id5)
+            {
+              int_fast32_t XXVlwcode = XXlwcode | codes[id5];
+              if (_mm_popcnt_u32(XXVlwcode) == 25)
+              {
+                pthread_mutex_lock(&print_mutex);
+                fprintf(stderr, "%64c\r", ' ');
+                printf("%#010x,%#010x,%#010x,%#010x,%#010x\n", codes[id1],
+                       codes[id2], codes[id3], codes[id4], codes[id5]);
+                fflush(NULL);
+                pthread_mutex_unlock(&print_mutex);
+              }
+            }
           }
         }
       }
+      exit(0);
     }
+
+    if (pid < 0)
+    {
+      perror(argv[0]);
+      exit(1);
+    }
+
+    // 0 < pid
+
+    if (process_count < MAX_PROCESS_COUNT)
+      process_count++;
+    count += ((unsigned long long)codes_len - id1 - 1)
+           * ((unsigned long long)codes_len - id1 - 2)
+           * ((unsigned long long)codes_len - id1 - 3)
+           * ((unsigned long long)codes_len - id1 - 4);
   }
-  STATUS();
+  // while there are processes to wait on
+  while (1)
+  {
+    PRINT_PROGRESS();
+    int status;
+    if (wait(&status) < 0)
+    {
+      if (errno == ECHILD)
+        // wait() failed because there are no remaining children
+        break;
+      perror(argv[0]);
+      exit(1);
+    }
+    if (status != 0)
+      // Child must print its own error message
+      exit(1);
+  }
+  PRINT_PROGRESS();
   fprintf(stderr, "\n");
 }

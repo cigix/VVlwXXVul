@@ -1,6 +1,7 @@
 WORDLIST?=words.txt
+PROCESS_COUNT?=8
 
-CFLAGS=-O3 -g3 -march=native
+CFLAGS=-O3 -g3 -march=native -DMAX_PROCESS_COUNT=$(PROCESS_COUNT)
 
 all: results.json
 

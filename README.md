@@ -43,10 +43,11 @@ binary numbers. By rewriting all the combinatorics in C, I was able to make sure
 that the essential set operations were properly optimised into a minimal set of
 processor instructions.
 
-As it stands, this implementation is able to work its way through the original
-370105 words list in less than 3 minutes.
+The third trick is parallelisation. I'm using processes because they are easier
+to handle in C.
 
-_But we can go faster._ TODO: vectorise, parallelise.
+As it stands, this implementation is able to work its way through the original
+370105 words list in less than 30 seconds.
 
 ## What am I looking at?
 
@@ -74,7 +75,8 @@ You will need:
 * Python 3.6 or later (f-strings)
 * a C compiler
 * an x86 CPU (`popcnt` instruction)
-* GNU Make
+* `make` (e.g. from GNU)
+* `tee` (e.g. from GNU coreutils)
 * a list of words. See description of the video.
 
 You may need:
@@ -83,8 +85,9 @@ You may need:
   and architecture.
 
 Place the list of words in a file called `words.txt` and run `make`. You may
-also override the default list with `make WORDLIST=<path to file>`. You may also
-run every step manually by feeding in the files and piping the output
-appropriately; be careful with the compilation of `match.c`.
+also override the default list and or the number of processes with `make
+WORDLIST=<path to file> PROCESS_COUNT=<count>`. You may also run every step
+manually by feeding in the files and piping the output appropriately; be careful
+with the compilation of `match.c`.
 
 The results are put in `results.json`.
